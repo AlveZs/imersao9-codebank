@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/alvezs/codebank/domain"
+	"github.com/alvezs/codebank/infrastructure/grpc/server"
+	"github.com/alvezs/codebank/infrastructure/kafka"
 	"github.com/alvezs/codebank/infrastructure/repository"
 	"github.com/alvezs/codebank/usecase"
 
@@ -15,26 +16,15 @@ import (
 func main() {
 	db := setupDb()
 	defer db.Close()
-
-	cc := domain.NewCreditCard()
-	cc.Number = "1234"
-	cc.Name = "Alves"
-	cc.ExpirationMonth = 7
-	cc.ExpirationYear = 2021
-	cc.CVV = 123
-	cc.Balance = 0
-	cc.Limit = 1000
-
-	repo := repository.NewTransactionRepositoryDb(db)
-	err := repo.CreateCreditCard(*cc)
-	if err != nil {
-		fmt.Println(err)
-	}
+	producer := setupKafkaProducer()
+	processTransactionUseCase := setupTransactionUseCase(db, producer)
+	serveGrpc(processTransactionUseCase)
 }
 
-func setupTransactionUseCase(db *sql.DB) usecase.UseCaseTransaction {
+func setupTransactionUseCase(db *sql.DB, producer kafka.KafkaProducer) usecase.UseCaseTransaction {
 	transactionRepository := repository.NewTransactionRepositoryDb(db)
 	useCase := usecase.NewUseCaseTransaction(transactionRepository)
+	useCase.KafkaProducer = producer
 	return useCase
 }
 
@@ -51,4 +41,17 @@ func setupDb() *sql.DB {
 		log.Fatal("error connecting to database")
 	}
 	return db
+}
+
+func setupKafkaProducer() kafka.KafkaProducer {
+	producer := kafka.NewKafkaProducer()
+	producer.SetupProducer("host.docker.internal:9094")
+	return producer
+}
+
+func serveGrpc(processTransactionUseCase usecase.UseCaseTransaction) {
+	grpcServer := server.NewGRPCServer()
+	grpcServer.ProcessTransactionUseCase = processTransactionUseCase
+	fmt.Println("Rodando gRPC Server")
+	grpcServer.Serve()
 }
